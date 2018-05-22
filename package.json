@@ -13,10 +13,10 @@
     "lint:js": "eslint ./test"
   },
   "dependencies": {
-    "solium": "^1.1.6",
-    "truffle": "^4.1.7",
+    "array-to-table": "^1.0.1",
     "babel-eslint": ">= 8",
     "bignumber.js": "git+https://github.com/frozeman/bignumber.js-nolookahead.git",
+    "chalk": "^2.4.1",
     "eslint": ">= 4",
     "eslint-config-prettier": ">= 2.7.0",
     "eslint-config-standard": "^11.0.0",
@@ -30,6 +30,9 @@
     "eslint-plugin-standard": "^3.0.1",
     "openzeppelin-solidity": "^1.9.0",
     "prettier": "^1.8.2",
-    "rimraf": "^2.6.2"
+    "rimraf": "^2.6.2",
+    "solium": "^1.1.6",
+    "truffle": "^4.1.9",
+    "web3-utils": "^1.0.0-beta.34"
   }
 }

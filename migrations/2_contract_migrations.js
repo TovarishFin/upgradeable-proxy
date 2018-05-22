@@ -1,6 +1,17 @@
-const Example = artifacts.require('./Example.sol')
+const Proxy = artifacts.require('./Proxy.sol')
+const ConceptToken = artifacts.require('./ProxyToken.sol')
 const BigNumber = require('bignumber.js')
 
 module.exports = deployer => {
-  deployer.deploy(Example, 'ExampleToken', 'EXT', 18, new BigNumber('100e18'))
+  deployer
+    .then(async () => {
+      const ptm = await ConceptToken.new()
+      await Proxy.new(ptm.address)
+
+      return true
+    })
+    .catch(err => {
+      // eslint-disable-next-line no-console
+      console.log(err)
+    })
 }

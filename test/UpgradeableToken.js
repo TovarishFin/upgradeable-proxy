@@ -3,7 +3,7 @@
 const assert = require('assert')
 const Proxy = artifacts.require('./Proxy.sol')
 const ProxyToken = artifacts.require('./ProxyToken')
-//const ProxyToken2 = artifacts.require('./ProxyToken2')
+const ProxyToken2 = artifacts.require('./ProxyToken2')
 
 const BigNumber = require('bignumber.js')
 const arrayToTable = require('array-to-table')
@@ -11,13 +11,13 @@ const chalk = require('chalk')
 const {
   getAllSimpleStorage,
   findMappingStorage,
-  getNestedMappingStorage,
+  // getNestedMappingStorage,
   getMappingStorage,
   findNestedMappingStorage
 } = require('./utils/general')
 
 describe('when deploying ProxyToken', () => {
-  contract('Example', accounts => {
+  contract('UpgradeableToken', accounts => {
     const defaultName = 'ExampleCoin'
     const defaultSymbol = 'EXL'
     const defaultDecimals = new BigNumber(18)
@@ -25,36 +25,70 @@ describe('when deploying ProxyToken', () => {
     const sender = accounts[0]
     const receiver = accounts[1]
     const spender = accounts[2]
+    const owner = accounts[3]
 
+    // contracts
     let ptm
+    let ptm2
+    let pxy
     let ptn
-    //let ptn2
+
+    // storage pointers
 
     before('setup contracts', async () => {
       // ProxyToken master
       ptm = await ProxyToken.new()
+      ptm2 = await ProxyToken2.new()
       // deployment of new proxy
-      const pxy = await Proxy.new(ptm.address)
+      pxy = await Proxy.new(ptm.address, { from: owner })
       // setup to call as ProxyToken implementation
       ptn = ProxyToken.at(pxy.address)
     })
 
-    it('should have ProxyToken master as first storage', async () => {
+    it('should have owner and master set in hashed storage location', async () => {
+      const proxyOwner = await pxy.proxyOwner()
+      const proxyMasterContract = await pxy.proxyMasterContract()
+
+      assert.equal(proxyOwner, owner, 'proxyOwner should be set to owner')
+      assert.equal(
+        proxyMasterContract,
+        ptm.address,
+        'proxyMastercontract should be set to ptm.address'
+      )
+    })
+
+    it('should have no storage in first 10 slots', async () => {
       const storage = await getAllSimpleStorage(ptn.address)
       console.log(chalk.magenta(arrayToTable(storage)))
 
-      assert.equal(
-        storage[0].data,
-        ptm.address,
-        'first and only storage should be ptm address'
-      )
-      for (const item of storage.slice(1)) {
+      for (const item of storage) {
         assert.equal(
           item.data,
           '0x00',
-          'all storage receiver than first should be 0x00'
+          'all storage at least in range of 0-10 should be 0x00'
         )
       }
+    })
+
+    it('proxy-only storage should be stored at a hashed storage location', async () => {
+      const proxyOwnerSlot = await pxy.proxyOwnerSlot()
+      const masterContractSlot = await pxy.masterContractSlot()
+
+      const proxyOwner = await web3.eth.getStorageAt(
+        pxy.address,
+        proxyOwnerSlot
+      )
+      const proxyMasterContract = await web3.eth.getStorageAt(
+        pxy.address,
+        masterContractSlot
+      )
+
+      assert.equal(
+        proxyMasterContract,
+        ptm.address,
+        'first storage should be ptm address'
+      )
+      assert.equal(proxyOwner, owner, 'second storage should be owner address')
     })
 
     it('should setupContract with correct values', async () => {
@@ -95,22 +129,22 @@ describe('when deploying ProxyToken', () => {
     it('should have additional storage from previous setup stage', async () => {
       const storage = await getAllSimpleStorage(ptn.address)
       console.log(chalk.magenta(arrayToTable(storage)))
-      // stored first because assigned first in proxy constructor
+      // all stored in order of usage in contract: use truffle-flattener to see clearly...
       assert.equal(
         storage[0].data,
-        ptm.address,
-        'slot 0 should still be master address'
+        '0x00',
+        'slot 0 should be empty used for balances mapping'
       )
-      // stored as hex value 2nd because first assigned due to inheritance
       assert.equal(
         new BigNumber(storage[1].data).toString(),
         defaultTotalSupply.toString(),
         'slot 1 should contain newly set totalSupply'
       )
+      //
       assert.equal(
         storage[2].data,
         '0x00',
-        'slot 2 should be zero for some reason?'
+        'slot 2 should be empty used for allowances nested mapping'
       )
       // stored as hex value with length at end of slot since less than 32bytes
       assert.equal(
@@ -228,21 +262,6 @@ describe('when deploying ProxyToken', () => {
       )
       console.log(chalk.magenta(mappingValueStorage))
 
-      const senderBalance = await getMappingStorage(
-        ptn.address,
-        new BigNumber(0),
-        sender
-      )
-      console.log(senderBalance)
-
-      const stuff = await getNestedMappingStorage(
-        ptn.address,
-        new BigNumber(2),
-        sender,
-        spender
-      )
-      console.log(stuff)
-
       const info = await findNestedMappingStorage(
         ptn.address,
         sender,
@@ -250,7 +269,89 @@ describe('when deploying ProxyToken', () => {
         new BigNumber(0),
         new BigNumber(20)
       )
-      console.log(info)
+      console.log(
+        chalk.cyan(`found nested mapping value using slot ${info.mappingSlot}`)
+      )
+      console.log(chalk.magenta(info.nestedMappingValueStorage))
+    })
+
+    it('should upgrade using ProxyToken2 as the new master', async () => {
+      const preMasterContract = await pxy.proxyMasterContract()
+
+      await pxy.changeProxyMaster(ptm2.address, {
+        from: owner
+      })
+
+      const postMasterContract = await pxy.proxyMasterContract()
+
+      assert.equal(
+        preMasterContract,
+        ptm.address,
+        'master address should be ptm.address'
+      )
+      assert.equal(
+        postMasterContract,
+        ptm2.address,
+        'master address should be ptm2.address'
+      )
+    })
+
+    it('should perform all previous functions normally with new upgrade', async () => {
+      const transferAmount = 3e17
+      const approveAmount = 5e17
+
+      // clear out approval for testing...
+      await ptn.approve(spender, 0, { from: sender })
+      const preSenderBalance = await ptn.balanceOf(sender)
+      const preReceiverBalance = await ptn.balanceOf(receiver)
+      const preSpenderAllowance = await ptn.allowance(sender, spender)
+
+      // access in new upgraded way with new def
+      ptn = await ProxyToken2.at(pxy.address)
+      await ptn.transfer(receiver, transferAmount, { from: sender })
+      await ptn.approve(spender, approveAmount, { from: sender })
+
+      const postSenderBalance = await ptn.balanceOf(sender)
+      const postReceiverBalance = await ptn.balanceOf(receiver)
+      const postSpenderAllowance = await ptn.allowance(sender, spender)
+
+      assert.equal(
+        preSenderBalance.sub(postSenderBalance).toString(),
+        transferAmount.toString(),
+        'sender balance should be decremented by transferAmount'
+      )
+      assert.equal(
+        postReceiverBalance.sub(preReceiverBalance).toString(),
+        transferAmount.toString(),
+        'receiver balance should be incremented by transferAmount'
+      )
+      assert.equal(
+        postSpenderAllowance.sub(preSpenderAllowance).toString(),
+        approveAmount.toString(),
+        'spender allowance should be incremented by approveAmount'
+      )
+    })
+
+    it('should NOT affect already existing storage slots', async () => {
+      const storage = await getAllSimpleStorage(ptn.address)
+      console.log(chalk.magenta(arrayToTable(storage)))
+
+      const mappingStuff = await getMappingStorage(
+        ptn.address,
+        new BigNumber(0),
+        sender
+      )
+      console.log(mappingStuff)
+    })
+
+    it('should toggleIsCool', async () => {
+      await ptn.toggleIsCool()
+      await ptn.setSomething('whatever dood')
+    })
+
+    it('should have new storage for isCool', async () => {
+      const storage = await getAllSimpleStorage(ptn.address)
+      console.log(chalk.magenta(arrayToTable(storage)))
     })
   })
 })

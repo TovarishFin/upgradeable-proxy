@@ -116,8 +116,7 @@ const findMappingStorage = async (address, key, startSlot, endSlot) => {
     }
   }
 
-  // no non-empty storage found
-  throw new Error('no storage found')
+  return null
 }
 
 const standardizeInput = input => {
@@ -191,7 +190,7 @@ const findNestedMappingStorage = async (
     }
   }
 
-  throw new Error('couldnt find nested mapping storage')
+  return null
 }
 
 module.exports = {
